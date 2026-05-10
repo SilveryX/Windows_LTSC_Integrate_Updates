@@ -1,0 +1,111 @@
+name: Win11_LTSC2024_X64
+
+on: 
+  workflow_dispatch:
+    inputs:
+      release:
+        description: '上传Release'
+        required: true
+        type: choice
+        default: 'false'
+        options:
+          - 'true'
+          - 'false'
+
+env:
+  FILE_NAME: Win11_LTSC2024_X64
+
+jobs:
+  Win11_LTSC2024_X64:
+    runs-on: windows-latest
+
+    steps:
+
+    # 检出本仓库
+    - name: Checkout repository
+      uses: actions/checkout@main
+
+    # 检出Win_ISO_Patching_Scripts仓库
+    - name: Checkout repository of Win_ISO_Patching_Scripts
+      run: |
+        git clone https://github.com/adavak/Win_ISO_Patching_Scripts.git
+
+    # 下载镜像
+    - name: Download ISO
+      shell: pwsh
+      run: |
+        cd Win_ISO_Patching_Scripts
+        
+        # 下载镜像
+        curl -L -o zh-cn_windows_11_enterprise_ltsc_2024_x64_dvd_cff9cd2d.iso "${{ secrets.MIRROR_LINK_WIN11_LTSC2024 }}"
+        ls
+
+    # 集成更新
+    - name: Update WinISO
+      shell: cmd
+      run: |
+        :: (可选)替换预设文件W10UI.ini
+        copy W10UI.ini .\Win_ISO_Patching_Scripts\W10UI.ini /Y
+
+        :: 切换至Win_ISO_Patching_Scripts根目录
+        cd Win_ISO_Patching_Scripts
+
+        :: 开始集成更新
+        echo 9 | Start.cmd
+
+    # 删除母盘
+    - name: Del MasterISO
+      shell: cmd
+      run: |
+        cd /d D:\a\LTSC_Patching\Win_ISO_Patching_Scripts
+        dir
+        del /F /S /Q zh-cn_windows_11_enterprise_ltsc_2024_x64_dvd_cff9cd2d.iso
+        dir
+
+    # 提取版本号
+    - name: Set Build_VERSION from generated ISO
+      shell: pwsh
+      run: |
+        cd Win_ISO_Patching_Scripts
+
+        $fileName = (Get-Item *.iso).Name
+    
+        # 使用正则表达式提取前两段数字 (例如 19044.7981)
+        if ($fileName -match "^(\d+\.\d+)") {
+            $version = $Matches[1]
+        
+        # 将提取到的版本号写入 GitHub Actions 环境变量
+            echo "Build_VERSION=$version" >> $env:GITHUB_ENV
+        
+            Write-Host "成功提取版本号: $version"
+        } else {
+            Write-Error "无法从文件名 $fileName 中提取版本号"
+            exit 1
+        }
+
+    # 移动并重命名镜像
+    - name: Rename
+      run: |
+        move  ./Win_ISO_Patching_Scripts/${{env.Build_VERSION}}*.iso ${{env.FILE_NAME}}.${{env.Build_VERSION}}.iso
+
+    # 上传镜像
+    - name: Upload artifact
+      uses: actions/upload-artifact@main
+      with:
+        name: ${{env.FILE_NAME}}.${{env.Build_VERSION}}
+        path: ${{env.FILE_NAME}}.${{env.Build_VERSION}}.iso
+
+    # 打包
+    - name: Package binaries
+      if: ${{ github.event.inputs.release == 'true' }}
+      run: |
+        7z a -v1950M ${{env.FILE_NAME}}.${{env.Build_VERSION}}.7z ${{env.FILE_NAME}}.${{env.Build_VERSION}}.iso -mx=9
+
+    # 发布镜像
+    - name: Release
+      if: ${{ github.event.inputs.release == 'true' }}
+      uses: softprops/action-gh-release@master
+      with:
+        tag_name: ${{env.FILE_NAME}}.${{env.Build_VERSION}}
+        name: ${{env.FILE_NAME}}.${{env.Build_VERSION}}
+        files: ${{env.FILE_NAME}}.${{env.Build_VERSION}}.7z*
